@@ -3,21 +3,28 @@ Update Qiniu OSS https cert with Let's Encrypt automatically.
 
 ## Usage
 
-编辑 crontab                                 
+编辑 crontab:
+
+```shell
 > crontab -e                                
 添加以下内容（每天凌晨1点执行）
 > 0 1 * * * /path/to/update_qiniu_cert.sh
+```
 
 七牛证书接口文档：https://developer.qiniu.com/fusion/8593/interface-related-certificate
+
 查看日志命令：cat /var/log/qiniu_cert_update.log
 
 
-# 配置信息
+## 配置信息
+
+```vim
 QINIU_ACCESS_KEY="xxx"
 QINIU_SECRET_KEY="xxx"
 DOMAIN="domain.example.com"
 CERT_ID_FILE="/path/to/qiniu_cert_id"
 LOG_FILE="/var/log/qiniu_cert_update.log"
+```
 
 替换为你自己的。
 
