@@ -19,11 +19,24 @@ QINIU_SECRET_KEY="xxx"
 DOMAIN="domain.example.com"
 CERT_ID_FILE="/path/to/qiniu_cert_id"
 LOG_FILE="/var/log/qiniu_cert_update.log"
+NGINX_CONTAINER_NAME="nginx"      # <<< 新增：你的 nginx 容器名/ID certbot 依赖于80端口，不能被占用
 
 # 日志函数
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> $LOG_FILE
 }
+
+################## 新增：控制 nginx 容器的函数 ##################
+stop_nginx_docker() {
+    log "停止 nginx 容器: $NGINX_CONTAINER_NAME"
+    docker stop "$NGINX_CONTAINER_NAME" 2>&1 | while read -r line; do log "docker stop: $line"; done
+}
+
+start_nginx_docker() {
+    log "启动 nginx 容器: $NGINX_CONTAINER_NAME"
+    docker start "$NGINX_CONTAINER_NAME" 2>&1 | while read -r line; do log "docker start: $line"; done
+}
+################################################################
 
 # 添加一个新的函数来处理时间戳转换
 format_timestamp() {
@@ -97,10 +110,10 @@ upload_cert() {
     # 使用jq正确处理JSON和证书内容
     # 可能不需要传递 domain 参数，现在没有试
     jq -n --arg name "$cert_name" \
-          --arg domain "$DOMAIN" \
+          --arg common_name "$DOMAIN" \
           --arg pri "$(cat $key_file)" \
           --arg ca "$(cat $cert_file)" \
-          '{name: $name, common_name: $domain, pri: $pri, ca: $ca}' > "$tmp_file"
+          '{name: $name, common_name: $common_name, pri: $pri, ca: $ca}' > "$tmp_file"
     
     local data=$(cat "$tmp_file")
     
@@ -368,18 +381,40 @@ main() {
     # 生成新证书
     local cert_dir="/etc/letsencrypt/live/$DOMAIN"
     if [ ! -d $cert_dir ]; then
-        certbot certonly --standalone -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN
-        if [ $? -ne 0 ]; then
+        stop_nginx_docker
+        # 无论脚本如何退出，都尝试重启 nginx 容器
+        trap 'start_nginx_docker' EXIT
+
+        log "执行 certbot 申请新证书..."
+        certbot_output=$(certbot certonly --standalone \
+                        -d "$DOMAIN" --non-interactive --agree-tos \
+                        --email "admin@$DOMAIN" 2>&1)
+        certbot_ret=$?
+        log "certbot 返回码: $certbot_ret"
+        log "certbot 输出: $certbot_output"
+        if [ $certbot_ret -ne 0 ]; then
             log "错误: 生成新证书失败"
             exit 1
         fi
+
+        # 申请成功后手动恢复 nginx（trap 仍保留以防后面异常退出）
+        start_nginx_docker
     else
         # 如果证书目录已存在，尝试更新
-        certbot renew --cert-name $DOMAIN --non-interactive
-        if [ $? -ne 0 ]; then
+        stop_nginx_docker
+        trap 'start_nginx_docker' EXIT
+
+        log "执行 certbot renew..."
+        certbot_output=$(certbot renew --cert-name "$DOMAIN" --non-interactive 2>&1)
+        certbot_ret=$?
+        log "certbot 返回码: $certbot_ret"
+        log "certbot 输出: $certbot_output"
+        if [ $certbot_ret -ne 0 ]; then
             log "错误: 更新证书失败"
             exit 1
         fi
+
+        start_nginx_docker
     fi
     
     # 上传新证书
